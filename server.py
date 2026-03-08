@@ -184,24 +184,18 @@ def _mint_peer_token(peer_url: str) -> str | None:
 
 
 def _parse_jsonrpc_response(resp: httpx.Response) -> dict:
-    """Extract a JSON-RPC object from a plain JSON or SSE response.
+    """Extract a JSON-RPC object from an MCP Streamable HTTP response.
 
-    MCP Streamable HTTP returns ``text/event-stream`` by default::
-
-        event: message
-        data: {"jsonrpc": "2.0", ...}
-
-    This helper handles both ``application/json`` and SSE transparently.
+    The server returns ``text/event-stream`` by default (controlled by the
+    server's ``is_json_response_enabled`` flag — not negotiable via Accept).
+    SSE frames look like ``data: {json}\\n``.  This helper handles both
+    ``application/json`` and SSE transparently.
     """
-    content_type = resp.headers.get("content-type", "")
-    if "application/json" in content_type:
+    if "application/json" in resp.headers.get("content-type", ""):
         return resp.json()
-    # SSE: find the first "data:" line containing JSON
     for line in resp.text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("data:"):
-            return json.loads(stripped[5:].strip())
-    # Last resort: try parsing the whole body as JSON
+        if line.startswith("data:"):
+            return json.loads(line[5:])
     return resp.json()
 
 

@@ -5,3 +5,5 @@ claude.json
 .env
 .claude/settings.local.json
 .claude/agent-memory/
+__pycache__/
+.pytest_cache/

@@ -8,8 +8,6 @@ IMAGE        ?= agent-runner
 SERVICE      ?= $(IMAGE)-mcp
 SA_NAME      ?= claude-connector
 SA_EMAIL     ?= $(SA_NAME)@$(PROJECT).iam.gserviceaccount.com
-SA_SECRET    ?= gcloud-connectors-sa
-SA_KEY_FILE  ?= sa-key.json
 AGENT_ID     ?=
 AGENT_FILE   ?=
 FIRESTORE_LOCATION ?= nam5
@@ -22,7 +20,7 @@ IMAGE_TAG    := $(REGISTRY)/$(IMAGE):latest
         register-agent \
         connect connect-oauth mcp-json disconnect \
         show-credentials rotate-oauth \
-        _check-prereqs _ensure-sa _ensure-cloudbuild-sa _deploy-default _deploy-source-default _configure-and-report
+        _check-prereqs _check-prereqs-source _ensure-sa _ensure-cloudbuild-sa _deploy-default _deploy-source-default _configure-and-report
 
 all: build
 
@@ -43,8 +41,7 @@ deploy:
 	  --region=$(REGION) \
 	  --project=$(PROJECT) \
 	  --service-account=$(SA_EMAIL) \
-	  --set-secrets=/run/secrets/sa-key.json=gcloud-sa-key:latest \
-	  --set-env-vars=GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/sa-key.json,GCP_PROJECT=$(PROJECT)$(if $(AGENT_ID),$(comma)AGENT_CONFIG_AGENT__NAME=$(AGENT_ID))$(if $(SERVICE_URL),$(comma)PUBLIC_URL=$(SERVICE_URL)) \
+	  --set-env-vars=GCP_PROJECT=$(PROJECT)$(if $(AGENT_ID),$(comma)AGENT_CONFIG_AGENT__NAME=$(AGENT_ID))$(if $(SERVICE_URL),$(comma)PUBLIC_URL=$(SERVICE_URL)) \
 	  --set-secrets=ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest \
 	  --set-secrets=OAUTH_CLIENT_CREDENTIALS=oauth-client-credentials:latest \
 	  --set-secrets=OAUTH_SIGNING_KEY=oauth-signing-key:latest \
@@ -66,8 +63,7 @@ deploy-source:
 	  --region=$(REGION) \
 	  --project=$(PROJECT) \
 	  --service-account=$(SA_EMAIL) \
-	  --set-secrets=/run/secrets/sa-key.json=gcloud-sa-key:latest \
-	  --set-env-vars=GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/sa-key.json,GCP_PROJECT=$(PROJECT)$(if $(AGENT_ID),$(comma)AGENT_CONFIG_AGENT__NAME=$(AGENT_ID))$(if $(SERVICE_URL),$(comma)PUBLIC_URL=$(SERVICE_URL)) \
+	  --set-env-vars=GCP_PROJECT=$(PROJECT)$(if $(AGENT_ID),$(comma)AGENT_CONFIG_AGENT__NAME=$(AGENT_ID))$(if $(SERVICE_URL),$(comma)PUBLIC_URL=$(SERVICE_URL)) \
 	  --set-secrets=ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest \
 	  --set-secrets=OAUTH_CLIENT_CREDENTIALS=oauth-client-credentials:latest \
 	  --set-secrets=OAUTH_SIGNING_KEY=oauth-signing-key:latest \
@@ -89,14 +85,8 @@ lint:
 
 # --- Local development ---
 
-secret:
-	podman secret rm $(SA_SECRET) 2>/dev/null || true
-	podman secret create $(SA_SECRET) $(SA_KEY_FILE)
-
 run-server:
 	podman run --rm \
-	  --secret $(SA_SECRET),target=/run/secrets/sa-key.json \
-	  -e GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/sa-key.json \
 	  -e ANTHROPIC_API_KEY \
 	  -e GCP_PROJECT=$(PROJECT) \
 	  -e OAUTH_CLIENT_CREDENTIALS \
@@ -109,18 +99,13 @@ run-server:
 
 run-agent:
 	podman run --rm \
-	  --secret $(SA_SECRET),target=/run/secrets/sa-key.json \
-	  -e GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/sa-key.json \
 	  -e ANTHROPIC_API_KEY \
 	  -e GCP_PROJECT=$(PROJECT) \
 	  $(if $(AGENT_ID),-e AGENT_CONFIG_AGENT__NAME=$(AGENT_ID)) \
 	  $(IMAGE) --task "$(TASK)"
 
 run:
-	podman run -it --rm \
-	  --secret $(SA_SECRET),target=/run/secrets/sa-key.json \
-	  -e GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/sa-key.json \
-	  $(IMAGE)
+	podman run -it --rm $(IMAGE)
 
 # --- Agent management ---
 
@@ -129,7 +114,7 @@ register-agent:
 	  echo "Usage: make register-agent AGENT_FILE=path/to/agent.md [PROJECT=$(PROJECT)]"; \
 	  exit 1; \
 	fi
-	GOOGLE_APPLICATION_CREDENTIALS=$(SA_KEY_FILE) uv run --with google-cloud-firestore \
+	uv run --with google-cloud-firestore \
 	  python3 -c " \
 	import sys; \
 	from pathlib import Path; \
@@ -215,7 +200,7 @@ rotate-oauth:
 
 bootstrap: _check-prereqs setup-infra build push _deploy-default _configure-and-report
 
-bootstrap-source: _check-prereqs setup-infra _deploy-source-default _configure-and-report
+bootstrap-source: _check-prereqs-source setup-infra _deploy-source-default _configure-and-report
 
 _check-prereqs:
 	@echo "=== Checking prerequisites ==="
@@ -223,7 +208,18 @@ _check-prereqs:
 	@command -v podman >/dev/null || { echo "ERROR: podman not found"; exit 1; }
 	@command -v python3 >/dev/null || { echo "ERROR: python3 not found"; exit 1; }
 	@command -v openssl >/dev/null || { echo "ERROR: openssl not found"; exit 1; }
-	@gcloud auth print-access-token >/dev/null 2>&1 || { echo "ERROR: gcloud not authenticated"; exit 1; }
+	@gcloud auth print-access-token >/dev/null 2>&1 || { echo "ERROR: gcloud not authenticated. Run: gcloud auth login"; exit 1; }
+	@[ -n "$(PROJECT)" ] || { echo "ERROR: GCP_PROJECT not set"; exit 1; }
+	@echo "All prerequisites satisfied."
+
+_check-prereqs-source:
+	@echo "=== Checking prerequisites ==="
+	@command -v gcloud >/dev/null || { echo "ERROR: gcloud not found"; exit 1; }
+	@command -v python3 >/dev/null || { echo "ERROR: python3 not found"; exit 1; }
+	@command -v openssl >/dev/null || { echo "ERROR: openssl not found"; exit 1; }
+	@gcloud auth print-access-token >/dev/null 2>&1 || { echo "ERROR: gcloud not authenticated. Run: gcloud auth login"; exit 1; }
+	@[ -n "$(PROJECT)" ] || { echo "ERROR: GCP_PROJECT not set"; exit 1; }
+	@[ -n "$$ANTHROPIC_API_KEY" ] || { echo "ERROR: ANTHROPIC_API_KEY not set"; exit 1; }
 	@echo "All prerequisites satisfied."
 
 _deploy-default:
@@ -279,19 +275,10 @@ setup-infra: _ensure-sa _ensure-cloudbuild-sa
 	  --project=$(PROJECT) >/dev/null 2>&1 || \
 	gcloud pubsub topics create agent-capabilities --project=$(PROJECT)
 	@echo "=== Ensuring secrets ==="
-	@for SECRET in gcloud-sa-key ANTHROPIC_API_KEY oauth-client-credentials oauth-signing-key; do \
+	@for SECRET in ANTHROPIC_API_KEY oauth-client-credentials oauth-signing-key; do \
 	  gcloud secrets describe $$SECRET --project=$(PROJECT) >/dev/null 2>&1 || \
 	    gcloud secrets create $$SECRET --project=$(PROJECT) --replication-policy=automatic; \
 	done
-	@echo "--- Populating secret: gcloud-sa-key ---"
-	@if ! gcloud secrets versions list gcloud-sa-key --project=$(PROJECT) \
-	  --limit=1 --format='value(name)' 2>/dev/null | grep -q .; then \
-	  gcloud secrets versions add gcloud-sa-key \
-	    --data-file=$(SA_KEY_FILE) --project=$(PROJECT); \
-	  echo "Added gcloud-sa-key version."; \
-	else \
-	  echo "gcloud-sa-key already has a version, skipping."; \
-	fi
 	@echo "--- Populating secret: ANTHROPIC_API_KEY ---"
 	@if ! gcloud secrets versions list ANTHROPIC_API_KEY --project=$(PROJECT) \
 	  --limit=1 --format='value(name)' 2>/dev/null | grep -q .; then \
@@ -325,7 +312,7 @@ setup-infra: _ensure-sa _ensure-cloudbuild-sa
 	  echo "oauth-signing-key already has a version, skipping."; \
 	fi
 	@echo "=== Granting Secret Manager access to service account ==="
-	@for SECRET in gcloud-sa-key ANTHROPIC_API_KEY oauth-client-credentials oauth-signing-key; do \
+	@for SECRET in ANTHROPIC_API_KEY oauth-client-credentials oauth-signing-key; do \
 	  gcloud secrets add-iam-policy-binding $$SECRET \
 	    --member="serviceAccount:$(SA_EMAIL)" \
 	    --role="roles/secretmanager.secretAccessor" \
@@ -350,13 +337,6 @@ _ensure-sa:
 	gcloud iam service-accounts create $(SA_NAME) \
 	  --project=$(PROJECT) \
 	  --display-name="Agent Runner Service Account"
-	@if [ ! -f "$(SA_KEY_FILE)" ]; then \
-	  echo "Generating SA key file: $(SA_KEY_FILE)"; \
-	  gcloud iam service-accounts keys create $(SA_KEY_FILE) \
-	    --iam-account=$(SA_EMAIL) --project=$(PROJECT); \
-	else \
-	  echo "SA key file $(SA_KEY_FILE) already exists, skipping."; \
-	fi
 	@echo "--- Granting project-level IAM roles to SA ---"
 	@for ROLE in roles/run.admin roles/secretmanager.admin roles/datastore.user \
 	  roles/pubsub.publisher roles/artifactregistry.writer roles/iam.serviceAccountUser; do \

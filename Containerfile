@@ -1,6 +1,6 @@
 FROM registry.access.redhat.com/ubi9/ubi-minimal:latest AS base
 
-RUN microdnf install -y which tar gzip findutils git \
+RUN microdnf install -y which tar gzip xz findutils git \
       --nodocs --setopt=install_weak_deps=0 && \
     microdnf clean all
 

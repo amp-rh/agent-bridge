@@ -69,12 +69,12 @@ def create_app(config: AppConfig) -> Starlette:
         oauth_app = create_oauth_app(oauth_config)
         routes.extend(oauth_app.routes)
 
-    # A2A routes (if enabled)
+    # A2A routes (if enabled) — routes already include full paths (/.well-known/...)
     if config.a2a.enabled:
         try:
-            a2a_app = _build_a2a_app(config, agent_runner)
-            if a2a_app:
-                routes.append(Mount("/.well-known", app=a2a_app))
+            a2a_builder = _build_a2a_app(config, agent_runner)
+            if a2a_builder:
+                routes.extend(a2a_builder.routes())
         except Exception as exc:
             print(f"A2A initialization failed (non-fatal): {exc}", file=sys.stderr)
 
@@ -95,7 +95,7 @@ def create_app(config: AppConfig) -> Starlette:
 
 
 def _build_a2a_app(config, agent_runner):
-    """Build the A2A Starlette sub-application."""
+    """Build the A2A application builder (routes include full paths like /.well-known/...)."""
     from a2a.server.apps import A2AStarletteApplication
     from a2a.server.request_handlers import DefaultRequestHandler
     from a2a.server.tasks import InMemoryTaskStore
@@ -111,8 +111,7 @@ def _build_a2a_app(config, agent_runner):
         task_store=task_store,
     )
 
-    a2a_app = A2AStarletteApplication(agent_card=card, http_handler=handler)
-    return a2a_app.build()
+    return A2AStarletteApplication(agent_card=card, http_handler=handler)
 
 
 def _register_agent(config):

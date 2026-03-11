@@ -12,9 +12,9 @@ SA_NAME      ?= claude-connector
 SA_EMAIL     ?= $(SA_NAME)@$(PROJECT).iam.gserviceaccount.com
 AGENT_ID     ?=
 ifdef AGENT_ID
-  SERVICE    ?= $(AGENT_ID)-mcp
+  SERVICE    ?= $(AGENT_ID)
 else
-  SERVICE    ?= $(IMAGE)-mcp
+  SERVICE    ?= $(IMAGE)
 endif
 AGENT_FILE   ?=
 FIRESTORE_LOCATION ?= nam5
@@ -22,7 +22,7 @@ FIRESTORE_LOCATION ?= nam5
 REGISTRY     := $(REGION)-docker.pkg.dev/$(PROJECT)/$(REPO)
 IMAGE_TAG    := $(REGISTRY)/$(IMAGE):latest
 
-.PHONY: all build run run-agent run-server push deploy deploy-source deploy-gcloud-dev configure-url service-url \
+.PHONY: all build run run-agent run-server push deploy deploy-source configure-url service-url \
         setup-infra bootstrap bootstrap-source test lint \
         register-agent \
         connect connect-oauth mcp-json disconnect \
@@ -204,28 +204,6 @@ rotate-oauth:
 	@echo "Then retrieve new credentials: make show-credentials"
 
 # --- Bootstrap ---
-
-deploy-gcloud-dev:
-	$(eval SERVICE_URL := $(shell gcloud run services describe gcloud-dev-mcp \
-	  --region=$(REGION) --project=$(PROJECT) --format='value(status.url)' 2>/dev/null))
-	gcloud run deploy gcloud-dev-mcp \
-	  --image=$(IMAGE_TAG) \
-	  --region=$(REGION) \
-	  --project=$(PROJECT) \
-	  --service-account=$(SA_EMAIL) \
-	  --set-env-vars=GCP_PROJECT=$(PROJECT),AGENT_CONFIG_AGENT__NAME=gcloud-operator$(if $(SERVICE_URL),$(comma)PUBLIC_URL=$(SERVICE_URL)) \
-	  --set-secrets=ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest \
-	  --set-secrets=OAUTH_CLIENT_CREDENTIALS=oauth-client-credentials:latest \
-	  --set-secrets=OAUTH_SIGNING_KEY=oauth-signing-key:latest \
-	  --min-instances=0 \
-	  --max-instances=1 \
-	  --memory=512Mi \
-	  --cpu=1 \
-	  --timeout=600 \
-	  --concurrency=10 \
-	  --cpu-throttling \
-	  --allow-unauthenticated \
-	  --port=8080
 
 bootstrap: _check-prereqs setup-infra build push _deploy-default _configure-and-report
 

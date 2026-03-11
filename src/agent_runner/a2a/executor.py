@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from a2a.server.agent_execution import AgentExecutor
+from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
-from a2a.types import TaskArtifactUpdateEvent, TextPart
+from a2a.types import TaskArtifactUpdateEvent, TaskState, TaskStatusUpdateEvent, TextPart
 
 if TYPE_CHECKING:
     from agent_runner.agent import AgentRunner
@@ -49,3 +49,14 @@ class ClaudeAgentExecutor(AgentExecutor):
                     },
                 )
             )
+
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+        from a2a.types import TaskStatus
+        await event_queue.enqueue_event(
+            TaskStatusUpdateEvent(
+                taskId=context.task_id,
+                contextId=context.context_id,
+                status=TaskStatus(state=TaskState.canceled),
+                final=True,
+            )
+        )

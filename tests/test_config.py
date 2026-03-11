@@ -115,6 +115,15 @@ def test_empty_yaml(tmp_path):
     assert config.agent.name == "gcp-claude-bridge"
 
 
+def test_invalid_yaml_gives_clear_error(tmp_path):
+    """Invalid YAML shows which file failed to parse."""
+    cfg_file = tmp_path / "bad-config.yaml"
+    cfg_file.write_text("agent:\n  name: [unterminated")
+
+    with pytest.raises(SystemExit, match="Failed to parse config file"):
+        load_config(path=cfg_file)
+
+
 def test_firestore_config_merged(monkeypatch, tmp_path):
     """Firestore config fields are merged after YAML, before env vars."""
     from unittest.mock import MagicMock, patch
@@ -200,8 +209,9 @@ def test_firestore_config_env_override_takes_precedence(monkeypatch, tmp_path):
     assert config.agent.description == "From env"
 
 
-def test_firestore_config_failure_nonfatal(tmp_path, capsys):
+def test_firestore_config_failure_nonfatal(tmp_path, caplog):
     """Firestore lookup failure is non-fatal."""
+    import logging
     from unittest.mock import MagicMock, patch
 
     cfg = {"agent": {"name": "test-agent"}, "gcp": {"project": "test-proj"}}
@@ -221,17 +231,19 @@ def test_firestore_config_failure_nonfatal(tmp_path, capsys):
         finally:
             del sys.modules["google.cloud.firestore"]
 
-    with patch.object(config_mod, "_apply_firestore_config", patched_apply):
-        config = load_config(path=cfg_file)
+    with caplog.at_level(logging.WARNING, logger="agent_runner"):
+        with patch.object(config_mod, "_apply_firestore_config", patched_apply):
+            config = load_config(path=cfg_file)
 
     # Should succeed with defaults despite Firestore failure
     assert config.agent.name == "test-agent"
-    captured = capsys.readouterr()
-    assert "non-fatal" in captured.err
+    assert "non-fatal" in caplog.text
 
 
-def test_firestore_invalid_fields_skipped(tmp_path, capsys):
+def test_firestore_invalid_fields_skipped(tmp_path, caplog):
     """Invalid Firestore config fields are skipped with a warning."""
+    import logging
+
     cfg = {"agent": {"name": "test-agent"}, "gcp": {"project": "test-proj"}}
     cfg_file = tmp_path / "config.yaml"
     cfg_file.write_text(yaml.dump(cfg))
@@ -260,14 +272,14 @@ def test_firestore_invalid_fields_skipped(tmp_path, capsys):
         finally:
             del sys.modules["google.cloud.firestore"]
 
-    with patch.object(config_mod, "_apply_firestore_config", patched_apply):
-        config = load_config(path=cfg_file)
+    with caplog.at_level(logging.WARNING, logger="agent_runner"):
+        with patch.object(config_mod, "_apply_firestore_config", patched_apply):
+            config = load_config(path=cfg_file)
 
     # All-or-nothing: bad timeout rejects entire Firestore overlay
     assert config.agent.timeout == 600  # default preserved
     assert "GCP-integrated" in config.agent.description  # default, not "Valid description"
-    captured = capsys.readouterr()
-    assert "Invalid Firestore config fields" in captured.err
+    assert "Invalid Firestore config fields" in caplog.text
 
 
 def test_validate_config_prints_yaml(tmp_path, capsys):

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import contextlib
-import sys
+import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
@@ -14,6 +14,8 @@ from starlette.routing import Mount
 
 if TYPE_CHECKING:
     from agent_runner.config import AppConfig
+
+log = logging.getLogger("agent_runner")
 
 
 class PublicURLMiddleware(BaseHTTPMiddleware):
@@ -34,8 +36,10 @@ class PublicURLMiddleware(BaseHTTPMiddleware):
             host = request.headers.get("host", "")
             if host and not host.startswith("localhost"):
                 scheme = request.headers.get("x-forwarded-proto", "https")
-                self._config.server.public_url = f"{scheme}://{host}"
+                new_url = f"{scheme}://{host}"
+                self._config.server.public_url = new_url
                 self._resolved = True
+                log.info("Public URL resolved from Host header: %s", new_url)
                 _register_agent(self._config)
         return await call_next(request)
 
@@ -68,6 +72,9 @@ def create_app(config: AppConfig) -> Starlette:
     if oauth_config:
         oauth_app = create_oauth_app(oauth_config)
         routes.extend(oauth_app.routes)
+        log.info("OAuth endpoints enabled")
+    else:
+        log.info("OAuth disabled (no credentials configured)")
 
     # A2A routes (if enabled) — routes already include full paths (/.well-known/...)
     if config.a2a.enabled:
@@ -75,8 +82,11 @@ def create_app(config: AppConfig) -> Starlette:
             a2a_builder = _build_a2a_app(config, agent_runner)
             if a2a_builder:
                 routes.extend(a2a_builder.routes())
+                log.info("A2A protocol enabled at /.well-known/agent.json")
         except Exception as exc:
-            print(f"A2A initialization failed (non-fatal): {exc}", file=sys.stderr)
+            log.warning("A2A initialization failed (non-fatal): %s", exc)
+    else:
+        log.info("A2A protocol disabled")
 
     # MCP routes (catch-all, must be last)
     routes.append(Mount("/", app=mcp_app))
@@ -85,7 +95,9 @@ def create_app(config: AppConfig) -> Starlette:
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
         async with mcp_app.lifespan(mcp_app):
             _register_agent(config)
+            log.info("Server ready — accepting requests")
             yield
+            log.info("Server shutting down")
 
     app = Starlette(routes=routes, lifespan=lifespan)
     app.add_middleware(BearerAuthMiddleware, oauth_config=oauth_config)
@@ -139,5 +151,6 @@ def _register_agent(config):
             capabilities=capabilities,
             description=config.agent.description,
         )
+        log.info("Registered in Firestore + Pub/Sub as %r", config.agent.name)
     except Exception as exc:
-        print(f"Agent registration failed (non-fatal): {exc}", file=sys.stderr)
+        log.warning("Agent registration failed (non-fatal): %s", exc)

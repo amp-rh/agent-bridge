@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
+
+log = logging.getLogger("agent_runner")
 
 
 class AgentConfig(BaseModel):
@@ -177,13 +180,21 @@ def _apply_firestore_config(data: dict[str, Any]) -> dict[str, Any]:
         if doc.exists:
             fs_data = doc.to_dict()
             agent = data.setdefault("agent", {})
+            merged_fields = []
             for field in ("system_prompt", "description", "model", "timeout", "max_turns"):
                 if field in fs_data:
                     agent[field] = fs_data[field]
+                    merged_fields.append(field)
+            if merged_fields:
+                log.info(
+                    "Merged config from Firestore agents/%s: %s",
+                    agent_name,
+                    ", ".join(merged_fields),
+                )
+        else:
+            log.debug("No Firestore config document for agent %r", agent_name)
     except Exception as exc:
-        import sys
-
-        print(f"Firestore config lookup failed (non-fatal): {exc}", file=sys.stderr)
+        log.warning("Firestore config lookup failed (non-fatal): %s", exc)
 
     return data
 
@@ -191,16 +202,31 @@ def _apply_firestore_config(data: dict[str, Any]) -> dict[str, Any]:
 def load_config(path: Path | str | None = None) -> AppConfig:
     """Load config from YAML file with env var overrides."""
     data: dict[str, Any] = {}
+    config_source = "defaults"
 
     if path:
         config_path = Path(path)
         if config_path.exists():
-            data = yaml.safe_load(config_path.read_text()) or {}
+            try:
+                data = yaml.safe_load(config_path.read_text()) or {}
+            except yaml.YAMLError as exc:
+                raise SystemExit(
+                    f"Failed to parse config file {config_path}: {exc}"
+                ) from exc
+            config_source = str(config_path)
     else:
         for config_path in CONFIG_PATHS:
             if config_path.exists():
-                data = yaml.safe_load(config_path.read_text()) or {}
+                try:
+                    data = yaml.safe_load(config_path.read_text()) or {}
+                except yaml.YAMLError as exc:
+                    raise SystemExit(
+                        f"Failed to parse config file {config_path}: {exc}"
+                    ) from exc
+                config_source = str(config_path)
                 break
+
+    log.info("Config loaded from %s", config_source)
 
     _apply_firestore_config(data)
     _apply_legacy_env(data)

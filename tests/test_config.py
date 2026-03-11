@@ -1,5 +1,6 @@
 """Tests for config loading, env overrides, and validation."""
 
+import pytest
 import yaml
 
 from agent_runner.config import load_config
@@ -111,6 +112,15 @@ def test_empty_yaml(tmp_path):
     assert config.agent.name == "gcloud-operator"
 
 
+def test_invalid_yaml_gives_clear_error(tmp_path):
+    """Invalid YAML shows which file failed to parse."""
+    cfg_file = tmp_path / "bad-config.yaml"
+    cfg_file.write_text("agent:\n  name: [unterminated")
+
+    with pytest.raises(SystemExit, match="Failed to parse config file"):
+        load_config(path=cfg_file)
+
+
 def test_firestore_config_merged(monkeypatch, tmp_path):
     """Firestore config fields are merged after YAML, before env vars."""
     from unittest.mock import MagicMock, patch
@@ -196,8 +206,9 @@ def test_firestore_config_env_override_takes_precedence(monkeypatch, tmp_path):
     assert config.agent.description == "From env"
 
 
-def test_firestore_config_failure_nonfatal(tmp_path, capsys):
+def test_firestore_config_failure_nonfatal(tmp_path, caplog):
     """Firestore lookup failure is non-fatal."""
+    import logging
     from unittest.mock import MagicMock, patch
 
     cfg = {"agent": {"name": "test-agent"}, "gcp": {"project": "test-proj"}}
@@ -217,10 +228,10 @@ def test_firestore_config_failure_nonfatal(tmp_path, capsys):
         finally:
             del sys.modules["google.cloud.firestore"]
 
-    with patch.object(config_mod, "_apply_firestore_config", patched_apply):
-        config = load_config(path=cfg_file)
+    with caplog.at_level(logging.WARNING, logger="agent_runner"):
+        with patch.object(config_mod, "_apply_firestore_config", patched_apply):
+            config = load_config(path=cfg_file)
 
     # Should succeed with defaults despite Firestore failure
     assert config.agent.name == "test-agent"
-    captured = capsys.readouterr()
-    assert "non-fatal" in captured.err
+    assert "non-fatal" in caplog.text

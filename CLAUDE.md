@@ -76,8 +76,7 @@ agent-runner/
 ├── Dockerfile                    # Symlink → Containerfile
 ├── Makefile                      # Build, deploy, infra setup targets
 ├── cloudbuild.yaml               # Cloud Build config
-├── agent-config.yaml             # Production config (gcp-claude-bridge)
-├── agent-config.example.yaml     # Full config example with documentation
+├── agent-config.example.yaml     # Full config example (copy to agent-config.yaml for local dev)
 ├── .env.example                  # Environment variable template
 ├── uv.lock                       # Locked dependencies (uv package manager)
 ├── .gitignore

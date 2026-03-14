@@ -338,3 +338,33 @@ class TestPublicURLMiddleware:
                 headers={"host": "second.run.app", "x-forwarded-proto": "https"},
             )
             assert config.server.public_url == "https://first.run.app"
+
+
+# ---- _heartbeat_loop tests ----
+
+
+async def test_heartbeat_loop_calls_advertise_not_publish():
+    """Heartbeat loop must update Firestore but never publish to Pub/Sub (issue #47)."""
+    import asyncio
+    from unittest.mock import patch
+
+    from agent_runner.config import AppConfig
+    from agent_runner.server import _heartbeat_loop
+
+    config = AppConfig()
+
+    with (
+        patch("agent_runner.registry.firestore.advertise") as mock_advertise,
+        patch("agent_runner.registry.pubsub.publish_capability") as mock_publish,
+    ):
+        # Run the loop for just past one tick using a very short interval
+        task = asyncio.ensure_future(_heartbeat_loop(config, interval=0))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    mock_advertise.assert_called()
+    mock_publish.assert_not_called()

@@ -102,8 +102,14 @@ def create_app(config: AppConfig) -> Starlette:
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
         async with mcp_app.lifespan(mcp_app):
             _register_agent(config)
+            heartbeat_task = asyncio.ensure_future(_heartbeat_loop(config))
             log.info("Server ready — accepting requests")
-            yield
+            try:
+                yield
+            finally:
+                heartbeat_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await heartbeat_task
             log.info("Server shutting down")
             await _deregister_agent(config)
 
@@ -177,3 +183,31 @@ def _register_agent(config):
         log.info("Registered in Firestore + Pub/Sub as %r", config.agent.name)
     except Exception as exc:
         log.warning("Agent registration failed (non-fatal): %s", exc)
+
+
+async def _heartbeat_loop(config, interval: int = 300):
+    """Periodically refresh the Firestore heartbeat without re-publishing to Pub/Sub.
+
+    Pub/Sub announcements are one-time "agent online" events (startup / URL change).
+    The heartbeat only needs to update last_heartbeat in Firestore so that peers can
+    detect whether an agent is still alive.
+    """
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            from agent_runner.registry.firestore import advertise
+
+            capabilities = []
+            for skill in config.a2a.skills:
+                capabilities.extend(skill.tags)
+
+            advertise(
+                agent_name=config.agent.name,
+                service_url=config.server.public_url,
+                capabilities=capabilities,
+                description=config.agent.description,
+                project=config.gcp.project,
+            )
+            log.debug("Heartbeat updated in Firestore for %r", config.agent.name)
+        except Exception as exc:
+            log.warning("Heartbeat update failed (non-fatal): %s", exc)

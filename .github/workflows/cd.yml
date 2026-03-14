@@ -69,6 +69,7 @@ jobs:
             --timeout=600 \
             --concurrency=10 \
             --max-instances=1 \
+            --memory=2Gi \
             --allow-unauthenticated \
             --format='value(status.url)')
           gcloud run services update "$SERVICE_NAME" \

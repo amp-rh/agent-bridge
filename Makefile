@@ -54,7 +54,7 @@ deploy:
 	  --set-secrets=OAUTH_SIGNING_KEY=oauth-signing-key:latest \
 	  --min-instances=0 \
 	  --max-instances=1 \
-	  --memory=512Mi \
+	  --memory=2Gi \
 	  --cpu=1 \
 	  --timeout=600 \
 	  --concurrency=10 \
@@ -76,7 +76,7 @@ deploy-source:
 	  --set-secrets=OAUTH_SIGNING_KEY=oauth-signing-key:latest \
 	  --min-instances=0 \
 	  --max-instances=1 \
-	  --memory=512Mi \
+	  --memory=2Gi \
 	  --cpu=1 \
 	  --timeout=600 \
 	  --concurrency=10 \

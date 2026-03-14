@@ -69,7 +69,8 @@ agent-runner/
 │   └── cd.yml                    # Build, push, deploy on main push
 │
 ├── .claude/agents/
-│   └── gcloud-operator.md        # Subagent prompt for GCP operations
+│   ├── gcloud-operator.md        # Subagent prompt for GCP operations
+│   └── issue-fixer.md            # Subagent prompt for fixing GitHub issues and opening PRs
 │
 ├── pyproject.toml                # Dependencies, ruff config, pytest config
 ├── Containerfile                 # Multi-stage UBI9-minimal build

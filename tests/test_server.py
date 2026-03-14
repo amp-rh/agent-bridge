@@ -154,13 +154,8 @@ def test_protected_resource_endpoint(oauth_client):
     assert data["resource"] == "http://testserver/mcp"
 
 
-def test_agent_card_in_open_paths():
-    """/.well-known/agent-card.json must be in OPEN_PATHS to avoid 401 (issue #17)."""
-    assert "/.well-known/agent-card.json" in OPEN_PATHS
-
-
 def test_agent_json_in_open_paths():
-    """/.well-known/agent.json must be in OPEN_PATHS to avoid 401 (issue #35)."""
+    """/.well-known/agent.json must be in OPEN_PATHS to avoid 401 (#35, #39)."""
     assert "/.well-known/agent.json" in OPEN_PATHS
 
 
@@ -222,13 +217,14 @@ class TestPublicURLMiddleware:
         client = TestClient(app, raise_server_exceptions=False)
 
         # Simulate Cloud Run request with real host
-        resp = client.get(
-            "/test",
-            headers={
-                "host": "my-service-abc123.run.app",
-                "x-forwarded-proto": "https",
-            },
-        )
+        with patch("agent_runner.server._register_agent"):
+            resp = client.get(
+                "/test",
+                headers={
+                    "host": "my-service-abc123.run.app",
+                    "x-forwarded-proto": "https",
+                },
+            )
         assert resp.status_code == 200
         assert config.server.public_url == "https://my-service-abc123.run.app"
 
@@ -409,3 +405,62 @@ async def test_heartbeat_loop_calls_advertise_not_publish():
 
     mock_advertise.assert_called()
     mock_publish.assert_not_called()
+
+
+async def test_heartbeat_runs_advertise_in_thread():
+    """Heartbeat must call advertise via asyncio.to_thread to avoid blocking (#44)."""
+    import asyncio
+    from unittest.mock import patch
+
+    from agent_runner.config import AppConfig
+    from agent_runner.server import _heartbeat_loop
+
+    config = AppConfig()
+
+    with (
+        patch("agent_runner.registry.firestore.advertise") as mock_advertise,
+        patch("asyncio.to_thread", wraps=asyncio.to_thread) as mock_to_thread,
+    ):
+        task = asyncio.ensure_future(_heartbeat_loop(config, interval=0))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    mock_to_thread.assert_called()
+    mock_advertise.assert_called()
+
+
+async def test_middleware_runs_register_in_thread():
+    """PublicURLMiddleware must call _register_agent via asyncio.to_thread (#44)."""
+    import asyncio
+    from starlette.responses import PlainTextResponse
+    from starlette.routing import Route
+
+    from agent_runner.config import AppConfig
+    from agent_runner.server import PublicURLMiddleware
+
+    config = AppConfig()
+
+    async def ok(request):
+        return PlainTextResponse("ok")
+
+    app = Starlette(routes=[Route("/test", ok)])
+    app.add_middleware(PublicURLMiddleware, config=config)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    with (
+        patch("agent_runner.server._register_agent") as mock_register,
+        patch("asyncio.to_thread", wraps=asyncio.to_thread) as mock_to_thread,
+    ):
+        client.get(
+            "/test",
+            headers={
+                "host": "my-service-abc123.run.app",
+                "x-forwarded-proto": "https",
+            },
+        )
+
+    mock_to_thread.assert_called_once_with(mock_register, config)

@@ -47,7 +47,7 @@ class PublicURLMiddleware(BaseHTTPMiddleware):
                 if self._agent_card is not None:
                     self._agent_card.url = self._config.server.public_url
                 log.info("Public URL resolved from Host header: %s", new_url)
-                _register_agent(self._config)
+                await asyncio.to_thread(_register_agent, self._config)
         return await call_next(request)
 
 
@@ -221,7 +221,8 @@ async def _heartbeat_loop(config, interval: int = 300):
             for skill in config.a2a.skills:
                 capabilities.extend(skill.tags)
 
-            advertise(
+            await asyncio.to_thread(
+                advertise,
                 agent_name=config.agent.name,
                 service_url=config.server.public_url,
                 capabilities=capabilities,

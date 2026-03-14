@@ -14,16 +14,36 @@ else
   echo "uv not found, skipping Python dependency install"
 fi
 
-# Authenticate gh CLI using GH_TOKEN if available and not already logged in
-if [ -n "${GH_TOKEN:-}" ]; then
-  if ! gh auth status &>/dev/null; then
-    echo "Authenticating gh CLI..."
-    echo "$GH_TOKEN" | gh auth login --with-token
-    echo "gh CLI authenticated as: $(gh api user --jq '.login')"
+# Authenticate gh CLI — fetch token from GCP Secret Manager (no plaintext secrets needed)
+if ! gh auth status &>/dev/null; then
+  GCP_PROJECT="${GCP_PROJECT:-claude-connectors}"
+  SECRET_NAME="github-token"
+
+  echo "Fetching GitHub token from Secret Manager..."
+  # Get an access token from the GCE metadata service (works in Cloud Run / GCP environments)
+  GCLOUD_TOKEN=$(curl -sf \
+    -H "Metadata-Flavor: Google" \
+    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" \
+    | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])" 2>/dev/null || true)
+
+  if [ -z "$GCLOUD_TOKEN" ]; then
+    echo "WARNING: Could not reach GCE metadata service. gh CLI will not be authenticated." >&2
+    echo "Ensure the session runs in a GCP environment with access to Secret Manager." >&2
   else
-    echo "gh CLI already authenticated"
+    GH_TOKEN=$(curl -sf \
+      -H "Authorization: Bearer $GCLOUD_TOKEN" \
+      "https://secretmanager.googleapis.com/v1/projects/${GCP_PROJECT}/secrets/${SECRET_NAME}/versions/latest:access" \
+      | python3 -c "import sys,json,base64; print(base64.b64decode(json.load(sys.stdin)['payload']['data']).decode())" 2>/dev/null || true)
+
+    if [ -z "$GH_TOKEN" ]; then
+      echo "WARNING: Secret '${SECRET_NAME}' not found or not accessible in project '${GCP_PROJECT}'." >&2
+      echo "Create it with: echo -n '<token>' | gcloud secrets create ${SECRET_NAME} --data-file=- --project=${GCP_PROJECT}" >&2
+    else
+      echo "Authenticating gh CLI..."
+      echo "$GH_TOKEN" | gh auth login --with-token
+      echo "gh CLI authenticated as: $(gh api user --jq '.login')"
+    fi
   fi
 else
-  echo "WARNING: GH_TOKEN is not set. gh CLI will not be authenticated." >&2
-  echo "Set GH_TOKEN in your Claude Code web environment settings to enable gh CLI login." >&2
+  echo "gh CLI already authenticated"
 fi

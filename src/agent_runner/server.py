@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator
@@ -16,6 +17,9 @@ if TYPE_CHECKING:
     from agent_runner.config import AppConfig
 
 log = logging.getLogger("agent_runner")
+
+# Re-register in Firestore every 5 minutes to keep heartbeat fresh.
+HEARTBEAT_INTERVAL_SECONDS = 300
 
 
 class PublicURLMiddleware(BaseHTTPMiddleware):
@@ -99,9 +103,15 @@ def create_app(config: AppConfig) -> Starlette:
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
         async with mcp_app.lifespan(mcp_app):
             _register_agent(config)
-            log.info("Server ready — accepting requests")
-            yield
-            log.info("Server shutting down")
+            heartbeat_task = asyncio.create_task(_heartbeat_loop(config))
+            log.info("Server ready — accepting requests (heartbeat every %ds)", HEARTBEAT_INTERVAL_SECONDS)
+            try:
+                yield
+            finally:
+                heartbeat_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await heartbeat_task
+                log.info("Server shutting down")
 
     app = Starlette(routes=routes, lifespan=lifespan)
     app.add_middleware(BearerAuthMiddleware, oauth_config=oauth_config)
@@ -134,6 +144,17 @@ def _build_a2a_app(config, agent_runner):
     return A2AStarletteApplication(agent_card=card, http_handler=handler), card
 
 
+async def _heartbeat_loop(config: AppConfig) -> None:
+    """Periodically re-register the agent to keep its heartbeat fresh."""
+    while True:
+        await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
+        try:
+            _register_agent(config)
+            log.debug("Heartbeat sent for %r", config.agent.name)
+        except Exception as exc:
+            log.warning("Heartbeat failed (will retry): %s", exc)
+
+
 def _register_agent(config):
     """Register agent in Firestore registry and publish to Pub/Sub (non-fatal)."""
     try:
@@ -151,6 +172,7 @@ def _register_agent(config):
             capabilities=capabilities,
             description=config.agent.description,
             project=config.gcp.project,
+            model=config.agent.model,
         )
         publish_capability(
             project=config.gcp.project,
